@@ -403,4 +403,3 @@ python train.py \
     --test-only \
     --resume <CHECKPOINT.pth>
 ```
-# ssd
