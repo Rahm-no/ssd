@@ -23,7 +23,7 @@ class DataProducer(threading.Thread):
         self.sampler = sampler
         self.num_workers = num_workers
         self.pid = threading.get_ident()  # Get thread ID
-
+    
     def run(self):
         try:
             while not data_stop_event.is_set():  # Stop if the event is set
@@ -54,6 +54,9 @@ class DataProducer(threading.Thread):
 
 
 
+
+
+
     def put_batch(self, batch):
         try:
             images, labels = zip(*batch)
@@ -61,7 +64,9 @@ class DataProducer(threading.Thread):
             while not data_stop_event.is_set():
                 try:
                     # Try to put data in queue
+                    print('add to Queue', self.queue.qsize())
                     self.queue.put((images, labels), timeout=1)
+
                     break
                 except Full:
                     if data_stop_event.is_set():
@@ -138,8 +143,12 @@ class AsynchronousLoader(DataLoader):
 
         while True:
             try:
+                print('get from Queue before', self.queue.qsize())
+
                 batch = self.queue.get(timeout=1)
                 self.batches_processed += 1
+                print('get from Queue after', self.queue.qsize())
+
 
                 return batch
 
@@ -150,3 +159,59 @@ class AsynchronousLoader(DataLoader):
                     raise StopIteration  # End iteration if threads have stopped
                 else:
                     time.sleep(0.1)  # Continue retrying if the stop event is no
+
+
+
+
+
+
+
+
+
+##############
+
+
+    # def run(self):
+    #     try:
+    #         while not data_stop_event.is_set():  # Stop if the event is set
+    #             batch = []
+    #             for idx in self.indices:
+    #                 # Check if idx is a list
+    #                 if isinstance(idx, list):
+    #                     # If idx is a list, iterate through its elements
+    #                     for sub_indx in idx:
+    #                         if data_stop_event.is_set():
+    #                             break  # Exit if stop event is triggered
+
+    #                         print(f"Producer {self.pid} processing sub-index {sub_indx}")
+    #                         sample = self.dataset[sub_indx]  # Access the dataset with sub_indx
+    #                         batch.append(sample)
+
+    #                         if len(batch) == self.batch_size:
+    #                             self.put_batch(batch)  # Process the full batch
+    #                             batch = []  # Reset the batch
+
+    #                         if data_stop_event.is_set():
+    #                             break  # Exit if stop event is triggered
+
+    #                 else:  # idx is assumed to be a single index
+    #                     if data_stop_event.is_set():
+    #                         break  # Exit if stop event is triggered
+
+    #                     print(f"Producer {self.pid} processing index {idx}")
+    #                     sample = self.dataset[idx]  # Access the dataset with idx
+    #                     batch.append(sample)
+
+    #                     if len(batch) == self.batch_size:
+    #                         self.put_batch(batch)  # Process the full batch
+    #                         batch = []  # Reset the batch
+
+    #             # After processing all indices, check for any remaining samples
+    #             if batch and not data_stop_event.is_set():
+    #                 print(f"Producer {self.pid} has remaining batch")
+    #                 self.put_batch(batch)  # Process remaining samples
+
+    #     except Exception as e:
+    #         print(f"Error in producer {self.pid}: {e}")  # Log any exceptions
+    #     finally:
+    #         print(f"Producer {self.pid} exiting.")  # Exit message

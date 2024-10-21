@@ -27,6 +27,7 @@ while kill -0 "$pid" 2> /dev/null; do
     # Get CPU usage (for current system)
     cpuUsage=$(top -bn1 | awk '/Cpu/ {print $2}')
 
+
     # Get memory usage (in MB)
     memUsage=$(free -m | awk '/Mem/ {print $3}')
 

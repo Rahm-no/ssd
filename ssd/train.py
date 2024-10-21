@@ -10,8 +10,8 @@ import torch.utils.data
 import torchvision
 import multiprocessing as mp
 from Asynch import AsynchronousLoader
-from transforms import save_times_to_excel
 data_queue = mp.Queue(maxsize=12)
+import csv
 from ssd_logger import mllogger
 from mlperf_logging.mllog.constants import (SUBMISSION_BENCHMARK, SUBMISSION_DIVISION, SUBMISSION_STATUS,
     SSD, CLOSED, ONPREM, EVAL_ACCURACY, STATUS, SUCCESS, ABORTED,
@@ -25,8 +25,28 @@ from coco_utils import get_coco, get_openimages
 from engine import train_one_epoch, evaluate
 from model.retinanet import retinanet_from_backbone
 
+# Define paths for each transformation's CSV file
+transformations = {
+    "RandomPhotometricDistort": "/datasets/open-images-v6-mlperf/random_photometric_distort_times.csv",
+    "RandomZoomOut": "/datasets/open-images-v6-mlperf/random_zoom_out_times.csv",
+    "RandomIoUCrop": "/datasets/open-images-v6-mlperf/random_iou_crop_times.csv",
+    "RandomHorizontalFlip": "/datasets/open-images-v6-mlperf/random_horizontal_flip_times.csv",
+    "ToTensor": "/datasets/open-images-v6-mlperf/to_tensor_times.csv"
+}
+
+# Initialize a dictionary to hold the writers for each transformation
+csv_writers = {}
+
+# Create and write headers for each CSV file
+for transform_name, csv_file_path in transformations.items():
+    with open(csv_file_path, mode='w', newline='') as csv_file:
+        csv_writer = csv.writer(csv_file)
+        # Write the header
+        csv_writer.writerow(["Image ID", "Image Size", "Time (ms)","Applied(T/F)"])
+        csv_writers[transform_name] = csv_writer  # Store the writer for later use
 
 
+csv_file_path = transformations
 def get_dataset_fn(name):
     paths = {
         "coco": (get_coco, 91),
@@ -36,9 +56,9 @@ def get_dataset_fn(name):
     return paths[name]
 
 
-def get_transform(train, data_augmentation):
+def get_transform(train, data_augmentation,csv_file_path):
     print("rnouaj: get transform")
-    return presets.DetectionPresetTrain(data_augmentation) if train else presets.DetectionPresetEval()
+    return presets.DetectionPresetTrain(data_augmentation,csv_file_path) if train else presets.DetectionPresetEval(csv_file_path)
 
 
 def parse_args(add_help=True):
@@ -200,11 +220,11 @@ def main(args):
     dataset = dataset_fn(name=args.dataset,
                          root=args.data_path,
                          image_set="train",
-                         transforms=get_transform(True, args.data_augmentation))
+                         transforms=get_transform(True, args.data_augmentation,csv_file_path))
     dataset_test = dataset_fn(name=args.dataset,
                               root=args.data_path,
                               image_set="val",
-                              transforms=get_transform(False, args.data_augmentation))
+                              transforms=get_transform(False, args.data_augmentation,csv_file_path))
 
     if args.distributed:
         train_sampler = torch.utils.data.distributed.DistributedSampler(dataset)
@@ -224,8 +244,8 @@ def main(args):
     num_shards = utils.get_world_size()
     global_rank = utils.get_rank()
 
-    #data_loader = AsynchronousLoader(data_queue,dataset, device=device,  shards = num_shards,  sampler=train_batch_sampler, batch_size=args.batch_size, shuffle = False, pin_memory=True,   num_workers= args.workers, rank = global_rank)
-    #data_loader_test = AsynchronousLoader(data_queue,dataset_test, device=device,  shards = num_shards,  sampler = test_sampler,batch_size=1, shuffle=False, num_workers=1, rank=global_rank)
+    # data_loader = AsynchronousLoader(data_queue,dataset, device=device,  shards = num_shards,  sampler=train_batch_sampler, batch_size=args.batch_size, shuffle = False, pin_memory=True,   num_workers= args.workers, rank = global_rank)
+    # data_loader_test = AsynchronousLoader(data_queue,dataset_test, device=device,  shards = num_shards,  sampler = test_sampler,batch_size=1, shuffle=False, num_workers=1, rank=global_rank)
 
 
     mllogger.event(key=TRAIN_SAMPLES, value=len(data_loader))
@@ -259,6 +279,7 @@ def main(args):
                     os.path.join(args.output_dir, 'checkpoint.pth'))
 
             # evaluate after every epoch
+            
             coco_evaluator = evaluate(model, data_loader_test, device=device, epoch=epoch+1, args=args)
             accuracy = coco_evaluator.get_stats()['bbox'][0]
             if args.target_map and accuracy >= args.target_map:
@@ -269,7 +290,7 @@ def main(args):
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
-    save_times_to_excel()
+    # save_times_to_excel()
     mllogger.event(key=STATUS, value=status, log_rank=True)
 
 

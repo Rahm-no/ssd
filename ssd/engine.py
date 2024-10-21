@@ -32,6 +32,7 @@ def train_one_epoch(model, optimizer, scaler, data_loader, device, epoch, args):
 
 
         with torch.cuda.amp.autocast(enabled=args.amp):
+            print('Forward pass started')
             loss_dict = model(images, targets)
             losses = sum(loss for loss in loss_dict.values())
 

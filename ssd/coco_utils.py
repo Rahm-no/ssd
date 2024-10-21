@@ -183,10 +183,9 @@ class CocoDetection(torchvision.datasets.CocoDetection):
 
         target = dict(image_id=image_id, annotations=target)
         if self._transforms is not None:
-            mllogger.start(key=ONLINE_PREPROCESSING_START,metadata={"IMAGE ID": image_id}, sync=True)
-
+            print('Online preporcessing start for', image_id)
             img, target = self._transforms(img, target)
-            mllogger.end(key=ONLINE_PREPROCESSING_END,metadata={"IMAGE ID": image_id}, sync=True)
+            print('Online preporcessing end for', image_id)
 
         return img, target
 
