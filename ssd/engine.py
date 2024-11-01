@@ -27,8 +27,8 @@ def train_one_epoch(model, optimizer, scaler, data_loader, device, epoch, args):
         lr_scheduler = utils.warmup_lr_scheduler(optimizer, start_iter, warmup_iters, args.warmup_factor)
 
     for images, targets in metric_logger.log_every(data_loader, args.print_freq, header):
-        images = list(image.to(device) for image in images)
-        targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+        # images = list(image.to(device) for image in images)
+        # targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
 
         with torch.cuda.amp.autocast(enabled=args.amp):

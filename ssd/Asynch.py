@@ -7,10 +7,12 @@ from queue import Full, Empty
 from torch.utils.data import DataLoader
 import psutil
 import csv
+import utils
+import multiprocessing as mp
 
 # Global stop event for monitoring
-data_stop_event = threading.Event()
-class DataProducer(threading.Thread):
+data_stop_event = mp.Event()
+class DataProducer(mp.Process):
     def __init__(self, queue, dataset, batch_size, shuffle, pin_memory, device, queue_size, indices, sampler, num_workers):
         super().__init__()
         self.queue = queue
@@ -22,7 +24,6 @@ class DataProducer(threading.Thread):
         self.indices = indices
         self.sampler = sampler
         self.num_workers = num_workers
-        self.pid = threading.get_ident()  # Get thread ID
     
     def run(self):
         try:
@@ -32,27 +33,42 @@ class DataProducer(threading.Thread):
                     if data_stop_event.is_set():
                         break
 
-                    print(f"Producer {self.pid} processing index {idx}")
-                    sample = self.dataset[idx]
-                    batch.append(sample)
+                    # Check if idx is a list
+                    if isinstance(idx, list):
+                        for sub_idx in idx:
+                            if data_stop_event.is_set():
+                                break
 
-                    if len(batch) == self.batch_size:
-                        self.put_batch(batch)
-                        batch = []
+                            print(f"Producer {self.pid} processing sub-index {sub_idx}")
+                            sample = self.dataset[sub_idx]
+                            batch.append(sample)
 
-                    if data_stop_event.is_set():
-                        break
+                            if len(batch) == self.batch_size:
+                                self.put_batch(batch)
+                                batch = []
+
+                            if data_stop_event.is_set():
+                                break
+                    else:
+                        print(f"Producer {self.pid} processing index {idx}")
+                        sample = self.dataset[idx]
+                        batch.append(sample)
+
+                        if len(batch) == self.batch_size:
+                            self.put_batch(batch)
+                            batch = []
+
+                        if data_stop_event.is_set():
+                            break
 
                 if batch and not data_stop_event.is_set():
                     print(f"Producer {self.pid} has remaining batch")
                     self.put_batch(batch)
-                
+                    
         except Exception as e:
             print(f"Error in producer {self.pid}: {e}")
         finally:
             print(f"Producer {self.pid} exiting.")
-
-
 
 
 
@@ -76,14 +92,21 @@ class DataProducer(threading.Thread):
         except Exception as e:
             print(f"Error in producer {self.pid}: {e}")
 
-    # def stop(self):
-    #     self.stop_flag = True  # Set the stop flag
-
+    def _stop(self):
+        data_stop_event.set()
 
 
 class AsynchronousLoader(DataLoader):
-    def __init__(self,queue, dataset, device, shards, rank, batch_size=1, shuffle=False, pin_memory=True, num_workers=1, queue_size=20, drop_last=True, sampler=None):
-        super().__init__(dataset=dataset, batch_size=batch_size, shuffle=shuffle, pin_memory=pin_memory, num_workers=0, drop_last=drop_last, sampler=sampler)
+    def __init__(self, queue, dataset, device, shards, rank, batch_size, shuffle, pin_memory, num_workers, queue_size=20, sampler=None, drop_last=True):
+        super().__init__(
+            dataset=dataset,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            pin_memory=pin_memory,
+            num_workers=num_workers,
+            drop_last=drop_last,
+            sampler=sampler  # Pass sampler here
+        )
         self.queue_size = queue_size
         self.queue = queue
         self.device = device
@@ -92,25 +115,34 @@ class AsynchronousLoader(DataLoader):
         self.rank = rank
         self.queue_sizes = []
         self.epoch_batches = len(self.dataset) // (self.batch_size * self.shards)  # Total batches per epoch
-        
+        print("batch size used here", self.batch_size)
+
         self.shuffle = shuffle
 
         self.indices = list(self.sampler) # it gives the indices per gpu
         self.start_threads()
 
+
     def start_threads(self):
         self.producers = []
         total_samples = len(self.indices)
-        indices_per_producer = total_samples // self.num_workers
+        indices_per_producer = max(1, total_samples // self.num_workers)  # Ensure at least one index per producer
         start_idx = 0
 
         for i in range(self.num_workers):
-            end_idx = start_idx + indices_per_producer
+            end_idx = min(start_idx + indices_per_producer, total_samples)
             producer_indices = self.indices[start_idx:end_idx]
             start_idx = end_idx
+
+            if not producer_indices:  # Break if no indices are available
+                break
+
+            print(f"[GPU Rank {self.rank}] Producer {i} assigned indices: {producer_indices}")
+            
             producer = DataProducer(self.queue, self.dataset, self.batch_size, self.shuffle,
                                     self.pin_memory, self.device, self.queue_size,
                                     producer_indices, self.sampler, self.num_workers)
+
             producer.start()
             self.producers.append(producer)
 
@@ -146,11 +178,15 @@ class AsynchronousLoader(DataLoader):
                 print('get from Queue before', self.queue.qsize())
 
                 batch = self.queue.get(timeout=1)
+                images, targets = batch
+                images = list(image.to(self.device) for image in images)
+                targets = [{k: v.to(self.device) for k, v in t.items()} for t in targets]
+             
                 self.batches_processed += 1
                 print('get from Queue after', self.queue.qsize())
 
 
-                return batch
+                return images, targets
 
             except Empty:
             # If the queue is empty and the stop event is set, break the loop

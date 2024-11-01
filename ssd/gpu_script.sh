@@ -1,47 +1,39 @@
 #!/bin/bash
 
-# This script monitors CPU and memory usage including the execution time of the 'run_and_time.sh' command
-echo "Time    CPU     GPU"
-
-# Use ps to find the PID of the 'run_and_time.sh' script
-pid=$(pgrep -f run_and_time.sh)
-
-# Check if the PID is being correctly detected
-if [ -z "$pid" ]; then
-    echo "Error: run_and_time.sh is not running or its PID could not be detected."
-    exit 1
-else
-    echo "Monitoring run_and_time.sh with PID: $pid"
-fi
+# This script monitors overall system CPU and GPU usage over time.
+echo "Time  CPU   GPU "
 
 # Get the start time
 start_time=$(date +%s)
 
-# Monitor as long as run_and_time.sh is running
-while kill -0 "$pid" 2> /dev/null; do
+# Continuous monitoring loop
+while true; do
     current_time=$(date +%s)
 
-    # Calculate the elapsed time
+    # Calculate elapsed time in seconds
     elapsed_time=$((current_time - start_time))
 
-    # Get CPU usage (for current system)
-    cpuUsage=$(top -bn1 | awk '/Cpu/ {print $2}')
+    # Get total CPU usage using mpstat
+    cpuUsage=$(top -bn1 | grep "Cpu(s)" | awk '{print $2}') 
 
+    # Get GPU utilization for all running GPUs and calculate the average
+    gpuUsages=$(nvidia-smi | tail -n +10 | awk '{print $13}' | sed 's/%//g')
+    if [ -z "$gpuUsages" ]; then
+        gpuUsage="0%"
+    else
+        total=0
+        count=0
+        for usage in $gpuUsages; do
+            total=$((total + usage))
+            count=$((count + 1))
+        done
+        average=$((total / count))
+        gpuUsage="${average}%"
+    fi
 
-    # Get memory usage (in MB)
-    memUsage=$(free -m | awk '/Mem/ {print $3}')
+    # Output the time, CPU, and GPU usage
+    echo "$elapsed_time s    $cpuUsage%    $gpuUsage"
 
-    # Get GPU utilization for all GPUs
-    gpuUsages=$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits | awk '{ total += $1; count++ } END { if (count > 0) print total/count; else print 0 }')
-
-    # Print the results
-    echo "$elapsed_time s    $cpuUsage%    ${gpuUsages}%"
-
-    # Sleep for 1 second
+    # Wait 1 second before the next update
     sleep 1
-
-    # Check if run_and_time.sh is still running
-    pid=$(pgrep -f run_and_time.sh)
 done
-
-echo "run_and_time.sh has finished execution."

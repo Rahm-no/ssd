@@ -101,7 +101,7 @@ def parse_args(add_help=True):
                         help="Use pre-trained models from the modelzoo")
 
     # Hyperparameters
-    parser.add_argument('-b', '--batch-size', default=2, type=int,
+    parser.add_argument('-b', '--batch-size', default=4, type=int,
                         help='images per gpu, the total batch size is $NGPU x batch_size')
     parser.add_argument('-e', '--eval-batch-size', default=None, type=int,
                         help='evaluation images per gpu, the total batch size is $NGPU x batch_size')
@@ -114,7 +114,7 @@ def parse_args(add_help=True):
                         help='factor for controlling warmup curve')
 
     # Other
-    parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
+    parser.add_argument('-j', '--workers', default=24, type=int, metavar='N',
                         help='number of data loading workers (default: 4)')
     parser.add_argument('--print-freq', default=20, type=int, help='print frequency')
     parser.add_argument('--eval-print-freq', default=None, type=int, help='eval print frequency')
@@ -226,6 +226,9 @@ def main(args):
                               image_set="val",
                               transforms=get_transform(False, args.data_augmentation,csv_file_path))
 
+    print("len of dataset", len(dataset))
+    print("len of val dataset", len(dataset_test))
+
     if args.distributed:
         train_sampler = torch.utils.data.distributed.DistributedSampler(dataset)
         test_sampler = torch.utils.data.distributed.DistributedSampler(dataset_test)
@@ -233,19 +236,39 @@ def main(args):
         train_sampler = torch.utils.data.RandomSampler(dataset)
         test_sampler = torch.utils.data.SequentialSampler(dataset_test)
     train_batch_sampler = torch.utils.data.BatchSampler(train_sampler, args.batch_size, drop_last=True)
+    print("sampler",len(train_batch_sampler))
 
-    data_loader = torch.utils.data.DataLoader(
-         dataset, batch_sampler=train_batch_sampler, num_workers=args.workers,
-         pin_memory=True, collate_fn=utils.collate_fn)
-    data_loader_test = torch.utils.data.DataLoader(
-         dataset_test, batch_size=args.eval_batch_size or args.batch_size,
-         sampler=test_sampler, num_workers=args.workers,
-         pin_memory=True, collate_fn=utils.collate_fn)
+    # data_loader = torch.utils.data.DataLoader(
+    #      dataset, sampler=train_sampler,batch_size = args.batch_size, num_workers=args.workers,
+    #      pin_memory=True, collate_fn=utils.collate_fn)
+    # data_loader_test = torch.utils.data.DataLoader(
+    #      dataset_test, batch_size=args.eval_batch_size or args.batch_size,
+    #      sampler=test_sampler, num_workers=args.workers,
+    #      pin_memory=True, collate_fn=utils.collate_fn)
     num_shards = utils.get_world_size()
     global_rank = utils.get_rank()
 
-    # data_loader = AsynchronousLoader(data_queue,dataset, device=device,  shards = num_shards,  sampler=train_batch_sampler, batch_size=args.batch_size, shuffle = False, pin_memory=True,   num_workers= args.workers, rank = global_rank)
-    # data_loader_test = AsynchronousLoader(data_queue,dataset_test, device=device,  shards = num_shards,  sampler = test_sampler,batch_size=1, shuffle=False, num_workers=1, rank=global_rank)
+    data_loader = AsynchronousLoader(data_queue,
+        dataset,
+        device=device, 
+        shards = num_shards,  
+        sampler=train_sampler,
+        batch_size=args.batch_size, 
+        shuffle = False, 
+        pin_memory=True,   
+        num_workers= args.workers, 
+        rank = global_rank)
+    print("dataloader size", len(data_loader))
+
+    data_loader_test = AsynchronousLoader(data_queue,
+        dataset_test, device=device,  
+        shards = num_shards,  
+        sampler = test_sampler,
+        batch_size=args.eval_batch_size,
+        pin_memory=True  , 
+        shuffle=False, 
+        num_workers=1, 
+        rank=global_rank)
 
 
     mllogger.event(key=TRAIN_SAMPLES, value=len(data_loader))
